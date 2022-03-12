@@ -194,12 +194,90 @@ T = array2table(A');
 % Converting the array B to a table test_T.
 test_T = array2table(B');
 
-t = templateTree('NumVariablesToSample','all',...
-    'PredictorSelection','interaction-curvature','Surrogate','on');
+%t = templateTree('NumVariablesToSample','all',...
+    %'PredictorSelection','interaction-curvature','Surrogate','on');
 rng(1); % For reproducibility
-Mdl = fitrensemble(test_T,T.Var6,'Method','Bag','NumLearningCycles',200, ...
-    'Learners',t);
 
+
+%% Dividing the data for testing and training.
+X = test_T;
+Y = T.Var6;
+cvpart = cvpartition(Y,'holdout',0.3);
+Xtrain = X(training(cvpart),:);
+Ytrain = Y(training(cvpart),:);
+Xtest = X(test(cvpart),:);
+Ytest = Y(test(cvpart),:);
+
+
+%%
+Mdl = fitrensemble(Xtrain,Ytrain,...
+    'OptimizeHyperparameters','all',...
+    'HyperparameterOptimizationOptions',...
+        struct(...
+        'AcquisitionFunctionName','expected-improvement-plus',...
+        'MaxObjectiveEvaluations',10)...
+    );
+
+%%
+figure
+plot(loss(Mdl,Xtest,Ytest,'mode','cumulative'))
+xlabel('Number of trees')
+ylabel('Test classification error')
+
+
+%% scatter plot of train vs train estimate and validation vs validation estimate.
+figure
+plot(Y,Y,'-b','LineWidth',4)
+hold on
+grid on
+
+%--------------------------------------------------------------------------
+% Use the trained model, Mdl, provided with the input matrix In to 
+% estimate the pollen values and save the results in a column vector 
+% called Out_estimate
+Out_Train = Ytrain;
+Out_Validation= Ytest;
+Out_TrainEstimate=predict(Mdl,Xtrain);
+Out_ValidationEstimate=predict(Mdl,Xtest);
+scatter(Ytrain,Out_TrainEstimate,'gs','filled')
+sz = 50;
+scatter(Ytest,Out_ValidationEstimate,sz,'r*')
+hold off
+
+% graph title, axis labels, and legend
+% calculate the correlation coefficients for the training and test data 
+% sets with the associated linear fits hint: check out the function corrcoef
+R_Train=corrcoef(Out_TrainEstimate,Out_Train);
+r_Train=R_Train(1,2);
+R_Validation=corrcoef(Out_ValidationEstimate,Out_Validation);
+r_Validation=R_Validation(1,2);
+
+legend_text={...
+    ['1:1'],...
+    ['Training Data (R ' num2str(r_Train,2) ')'],...
+    ['Validation Data (R ' num2str(r_Validation,2) ')']...
+    };
+legend(legend_text,'Location','northwest');
+xlabel('Actual PM levels','fontsize',20);
+ylabel('Estimated PM levels','fontsize',20);
+title('Scatter Diagram','fontsize',25);
+xlim([0 max(Y)])
+ylim([0 max(Y)])
+
+% Set default font sizes and other properties
+set(gca,'FontSize',20);
+set(gca,'LineWidth',2);  
+set(gca,'TickDir','out');
+
+f = gcf;
+
+% Requires R2020a or later
+exportgraphics(f,'scatter_diagram_fitrensemble.png','Resolution',1000)
+%print('-dpng',fn_plot);% save to a png file
+%print('-depsc2',fn_plot);% save to a color eps file
+
+
+%%
 yHat = oobPredict(Mdl);
 R2 = corr(Mdl.Y,yHat)^2
 
