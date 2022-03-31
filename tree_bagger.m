@@ -176,38 +176,33 @@ for month = 8:12
     end    
 end      
 
-%   p - input data.
+%% 
 %p = [SkyRed, SkyGreen, SkyBlue, Temperature, Pressure, Humidity]';
-p = [SkyRed, SkyGreen, SkyBlue, Temperature, Pressure]';
-
-%   t - target data.
-% PM_1, PM10, PM2_5.
-t = PM_1';
-
+p = [SkyRed, SkyGreen, SkyBlue, Temperature, Pressure, PM_1]';
+q = [SkyRed, SkyGreen, SkyBlue, Temperature, Pressure]';
 % A has R,G,B,T,P and PM levels.
-A = [p;t];
-% B has R,G,B,T,P.
-B = [p];
-% Converting the array A to a table T.
-T = array2table(A');
 
-% Converting the array B to a table test_T.
-test_T = array2table(B');
 
-%t = templateTree('NumVariablesToSample','all',...
-    %'PredictorSelection','interaction-curvature','Surrogate','on');
-rng(1); % For reproducibility
+T = array2table(p');
+Q = array2table(q');
+% Assigning names to coluns of the table.
+T.Properties.VariableNames = {'SkyRed','SkyGreen','SkyBlue','Temperature','Pressure','PM'};
+Q.Properties.VariableNames = {'SkyRed','SkyGreen','SkyBlue','Temperature','Pressure'};
+
 
 
 %% Dividing the data for testing and training.
-X = test_T;
-Y = T.Var6;
+X = Q;
+Y = T.PM;
 cvpart = cvpartition(Y,'holdout',0.3);
 Xtrain = X(training(cvpart),:);
 Ytrain = Y(training(cvpart),:);
 Xtest = X(test(cvpart),:);
 Ytest = Y(test(cvpart),:);
 
+
+
+                                        %%% fitrensemble %%%
 
 %%
 Mdl = fitrensemble(Xtrain,Ytrain,...
@@ -272,7 +267,7 @@ set(gca,'TickDir','out');
 f = gcf;
 
 % Requires R2020a or later
-exportgraphics(f,'scatter_diagram_fitrensemble.png','Resolution',1000)
+exportgraphics(f,'scatter_diagram_fitrensemble.png','Resolution',300)
 %print('-dpng',fn_plot);% save to a png file
 %print('-depsc2',fn_plot);% save to a color eps file
 
@@ -284,10 +279,226 @@ R2 = corr(Mdl.Y,yHat)^2
 impOOB = oobPermutedPredictorImportance(Mdl);
 figure
 bar(impOOB)
-title('Unbiased Predictor Importance Estimates')
+title('Unbiased Predictor Importance Estimates for TreeBagger')
 xlabel('Predictor variable')
 ylabel('Importance')
+%title('Predictor Importance Estimates');
+%xlabel('Estimates with Curvature Tests');ylabel('Predictors');
+set(gca,'FontSize',20); set(gca,'TickDir','out'); set(gca,'LineWidth',2);
 h = gca;
 h.XTickLabel = Mdl.PredictorNames;
 h.XTickLabelRotation = 45;
 h.TickLabelInterpreter = 'none';
+print('-dpng','input-importance-fitrensemble.png');% save to an eps file
+
+%%
+
+
+%%
+                                        %%% TreeBagger %%%
+
+%%
+
+
+
+%%
+Tbl = table(Xtrain.SkyRed, Xtrain.SkyGreen, Xtrain.SkyBlue, Xtrain.Temperature, Xtrain.Pressure, Ytrain);
+Tbl.Properties.VariableNames = {'SkyRed','SkyGreen','SkyBlue','Temperature','Pressure','PM'};
+
+%%
+Mdl_TB = TreeBagger(...
+    200,Tbl,'PM',...
+    'Method','regression',...
+    'Surrogate','on',...
+    'PredictorSelection','curvature',...
+    'OOBPredictorImportance','on'...
+    );
+
+%%
+% |TreeBagger| stores predictor importance estimates in the property
+% |OOBPermutedPredictorDeltaError|. Compare the estimates using a bar
+% graph.
+imp = Mdl_TB.OOBPermutedPredictorDeltaError;
+
+%--------------------------------------------------------------------------
+% sort the importances into descending order, with the most important first
+% Hint: look up the function sort with the option 'descend'
+[sorted_imp,isorted_imp] = sort(imp,'descend');
+
+%--------------------------------------------------------------------------
+% Draw a horizontal bar chart showing the variables in descending order of
+% importance. Hint: look up the function barh.
+% Label each variable with its name. 
+% Hints: (1) Look up the function text. (2) Variable names are held in 
+% Mdl.PredictorNames
+figure;barh(imp(isorted_imp));hold on;grid on;
+barh(imp(isorted_imp(1:5)),'y');barh(imp(isorted_imp(1:3)),'r');
+title('Predictor Importance Estimates');
+xlabel('Estimates with Curvature Tests');ylabel('Predictors');
+set(gca,'FontSize',20); set(gca,'TickDir','out'); set(gca,'LineWidth',2);
+ax = gca;ax.YDir='reverse';ax.XScale = 'log';
+%xlim([0.08 4])
+%ylim([.25 24.75])
+% label the bars
+for i=1:length(Mdl.PredictorNames)
+    text(...
+        1.05*imp(isorted_imp(i)),i,...
+        strrep(Mdl.PredictorNames{isorted_imp(i)},'_',''),...
+        'FontSize',24 ...
+    )
+end
+
+f = gcf;
+
+% Requires R2020a or later
+exportgraphics(f,'Predictor_Importance_Estimates_TreeBagger.png','Resolution',300)
+
+
+
+%% scatter plot of TreeBagger.
+
+figure
+plot(Y,Y,'-b','LineWidth',4)
+hold on
+grid on
+
+%--------------------------------------------------------------------------
+% Use the trained model, Mdl, provided with the input matrix In to 
+% estimate the pollen values and save the results in a column vector 
+% called Out_estimate
+Out_Train = Ytrain;
+Out_Validation= Ytest;
+Out_TrainEstimate=predict(Mdl_TB,Xtrain);
+Out_ValidationEstimate=predict(Mdl_TB,Xtest);
+scatter(Ytrain,Out_TrainEstimate,'gs','filled')
+sz = 50;
+scatter(Ytest,Out_ValidationEstimate,sz,'r*')
+hold off
+
+% graph title, axis labels, and legend
+% calculate the correlation coefficients for the training and test data 
+% sets with the associated linear fits hint: check out the function corrcoef
+R_Train=corrcoef(Out_TrainEstimate,Out_Train);
+r_Train=R_Train(1,2);
+R_Validation=corrcoef(Out_ValidationEstimate,Out_Validation);
+r_Validation=R_Validation(1,2);
+
+legend_text={...
+    ['1:1'],...
+    ['Training Data (R ' num2str(r_Train,2) ')'],...
+    ['Validation Data (R ' num2str(r_Validation,2) ')']...
+    };
+legend(legend_text,'Location','northwest');
+xlabel('Actual PM levels','fontsize',20);
+ylabel('Estimated PM levels','fontsize',20);
+title('Scatter Diagram for TreeBagger','fontsize',25);
+xlim([0 max(Y)])
+ylim([0 max(Y)])
+
+% Set default font sizes and other properties
+set(gca,'FontSize',20);
+set(gca,'LineWidth',2);  
+set(gca,'TickDir','out');
+
+f = gcf;
+
+% Requires R2020a or later
+exportgraphics(f,'scatter_diagram_TreeBagger.png','Resolution',300)
+%print('-dpng',fn_plot);% save to a png file
+%print('-depsc2',fn_plot);% save to a color eps file
+
+
+
+
+
+
+
+%%
+
+
+                                %%% Binary decision tree fitree %%%
+            
+%%
+rng default
+%Mdl = fitrtree(X,Y,'PredictorSelection','curvature','Surrogate','on');
+Mdl_BDT = fitrtree(X,Y,'OptimizeHyperparameters','auto',...
+    'HyperparameterOptimizationOptions',struct('AcquisitionFunctionName',...
+    'expected-improvement-plus'));
+
+%view(Mdl,'Mode','graph')
+            
+%%
+imp = predictorImportance(Mdl_BDT);
+
+figure;
+bar(imp);
+title('Predictor Importance Estimates');
+ylabel('Estimates');
+xlabel('Predictors');
+h = gca;
+% Set default font sizes and other properties
+set(gca,'FontSize',20);
+set(gca,'LineWidth',2);  
+set(gca,'TickDir','out');
+h.XTickLabel = Mdl.PredictorNames;
+h.XTickLabelRotation = 45;
+h.TickLabelInterpreter = 'none';
+
+
+figure
+plot(Y,Y,'-b','LineWidth',4)
+hold on
+grid on
+
+%% scatter plot of binary decision tree.
+
+figure
+plot(Y,Y,'-b','LineWidth',4)
+hold on
+grid on
+
+%--------------------------------------------------------------------------
+% Use the trained model, Mdl, provided with the input matrix In to 
+% estimate the pollen values and save the results in a column vector 
+% called Out_estimate
+Out_Train = Ytrain;
+Out_Validation= Ytest;
+Out_TrainEstimate=predict(Mdl_BDT,Xtrain);
+Out_ValidationEstimate=predict(Mdl_BDT,Xtest);
+scatter(Ytrain,Out_TrainEstimate,'gs','filled')
+sz = 50;
+scatter(Ytest,Out_ValidationEstimate,sz,'r*')
+hold off
+
+% graph title, axis labels, and legend
+% calculate the correlation coefficients for the training and test data 
+% sets with the associated linear fits hint: check out the function corrcoef
+R_Train=corrcoef(Out_TrainEstimate,Out_Train);
+r_Train=R_Train(1,2);
+R_Validation=corrcoef(Out_ValidationEstimate,Out_Validation);
+r_Validation=R_Validation(1,2);
+
+legend_text={...
+    ['1:1'],...
+    ['Training Data (R ' num2str(r_Train,2) ')'],...
+    ['Validation Data (R ' num2str(r_Validation,2) ')']...
+    };
+legend(legend_text,'Location','northwest');
+xlabel('Actual PM levels','fontsize',20);
+ylabel('Estimated PM levels','fontsize',20);
+title('Scatter Diagram for binary decision tree','fontsize',25);
+xlim([0 max(Y)])
+ylim([0 max(Y)])
+
+% Set default font sizes and other properties
+set(gca,'FontSize',20);
+set(gca,'LineWidth',2);  
+set(gca,'TickDir','out');
+
+f = gcf;
+
+% Requires R2020a or later
+exportgraphics(f,'scatter_diagram_binary_decision_tree_for_regression.png','Resolution',300)
+%print('-dpng',fn_plot);% save to a png file
+%print('-depsc2',fn_plot);% save to a color eps file
+
